@@ -22,9 +22,15 @@ variable "instance_type" {
   }
 }
 
-variable "ec2_tags" {
-  type = map 
-  description = "tags for the instances created"
-  default = {}
+
+variable "common_tags" {
+  type = map
 }
 
+variable "environment" {
+  type = string
+}
+
+variable "project" {
+  type = string
+}
