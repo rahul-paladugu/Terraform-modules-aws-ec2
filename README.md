@@ -1,94 +1,122 @@
-# Terraform Module — AWS EC2 Instances
+# terraform-aws-ec2
 
-A reusable Terraform module for provisioning one or more AWS EC2 instances dynamically based on a list of component names. Instances are named consistently using a combination of the component name, environment, and project — making it easy to manage multi-tier architectures across multiple environments.
+> **Internal Terraform Module** | Maintained by the Platform Engineering team
 
----
+A standardized, reusable Terraform module for provisioning AWS EC2 instances across all environments in our infrastructure. This module enforces naming conventions, tagging standards, and approved instance types — ensuring every compute resource deployed in our AWS accounts is consistent, traceable, and cost-accountable.
 
-## Features
-
-- Provision **multiple EC2 instances** in a single module call using a component list
-- Consistent **naming convention** using `environment` and `project` locals
-- Enforced **instance type validation** (only `t3.micro` or `t3.small` allowed)
-- Common **tagging** support for cost allocation and resource tracking
-- Built-in **local-exec provisioner** to log the private IP of each instance on creation
+Designed to be consumed by application teams via their product-level Terraform stacks. Do **not** create EC2 resources directly — use this module.
 
 ---
 
-## Usage
+## When to Use This Module
+
+Use this module when your service or component requires:
+
+- One or more EC2 instances as part of a product stack (e.g. API servers, workers, batch processors)
+- Consistent resource naming tied to environment and project
+- Centrally enforced tagging for cost allocation and ownership tracking
+
+
+## Quick Start
 
 ```hcl
-module "ec2_instances" {
-  source = "./path-to-this-module"
+module "app_servers" {
+  source = "git::https://github.com/rahul-paladugu/Terraform-modules-aws-ec2.git?ref=v1.0.0"
 
-  components    = ["web", "app", "db"]
+  components    = ["api", "worker"]
   ami_id        = "ami-0abcdef1234567890"
-  instance_type = "t3.micro"
-  sg_ids        = ["sg-0abc12345", "sg-0def67890"]
-  environment   = "dev"
-  project       = "myapp"
+  instance_type = "t3.small"
+  sg_ids        = [aws_security_group.app.id]
+  environment   = "prod"
+  project       = "payments"
 
   common_tags = {
-    Owner   = "devops-team"
-    Team    = "platform"
-    CostCenter = "engineering"
+    Owner      = "platform-engineering"
+    CostCenter = "product-payments"
+    ManagedBy  = "terraform"
   }
 }
 ```
 
-This will create **3 EC2 instances** named:
-- `web-dev-myapp`
-- `app-dev-myapp`
-- `db-dev-myapp`
-
----
+This provisions two EC2 instances named:
+- `api-prod-payments`
+- `worker-prod-payments`
 
 ## Requirements
 
-| Name | Version |
-|------|---------|
-| terraform | >= 1.0.0 |
-| aws | >= 4.0 |
+| Requirement | Version |
+|-------------|---------|
+| Terraform | `>= 1.3.0` |
+| AWS Provider | `>= 4.0` |
+| AWS CLI | `>= 2.0` (for local development) |
 
----
+### IAM Permissions
 
-## Providers
+The AWS IAM role executing this module must have the following permissions:
 
-| Name | Version |
-|------|---------|
-| aws | >= 4.0 |
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "ec2:RunInstances",
+    "ec2:DescribeInstances",
+    "ec2:TerminateInstances",
+    "ec2:CreateTags",
+    "ec2:DescribeSecurityGroups",
+    "ec2:DescribeImages"
+  ],
+  "Resource": "*"
+}
+```
 
 ---
 
 ## Inputs
 
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `components` | `list(string)` | ✅ Yes | List of server/component names to be created. Each entry results in one EC2 instance. Example: `["web", "app", "db"]` |
-| `ami_id` | `string` | ✅ Yes | The AMI ID used to launch the EC2 instances. Must be valid in the target AWS region. |
-| `sg_ids` | `list(string)` | ✅ Yes | List of Security Group IDs to associate with the instances. |
-| `instance_type` | `string` | ✅ Yes | EC2 instance type. Allowed values: `t3.micro` or `t3.small`. |
-| `common_tags` | `map(string)` | ✅ Yes | Map of tags applied to all EC2 instances. Used for cost allocation and tracking. |
-| `environment` | `string` | ✅ Yes | Deployment environment name (e.g., `dev`, `staging`, `prod`). Used in resource naming. |
-| `project` | `string` | ✅ Yes | Project name. Combined with `environment` to form a common name used in resource tags. |
+All inputs are **mandatory** — this module has no optional variables or defaults. Every value must be explicitly set by the consuming stack.
+
+| Name | Type | Description |
+|------|------|-------------|
+| `components` | `list(string)` | Names of the components to provision. One EC2 instance is created per entry. e.g. `["api", "worker"]` |
+| `ami_id` | `string` | AMI ID used to launch all instances. Must be valid in the target AWS region. |
+| `instance_type` | `string` | EC2 instance type. Restricted to `t3.micro` or `t3.small` — see approved types below. |
+| `sg_ids` | `list(string)` | Security Group IDs to attach to every instance. Must be pre-created outside this module. |
+| `environment` | `string` | Deployment environment — `dev`, `staging`, or `prod`. Used in resource naming and tagging. |
+| `project` | `string` | Project or product name this infrastructure belongs to. Used in resource naming. |
+| `common_tags` | `map(string)` | Tags applied to all instances. Must include `Owner`, `CostCenter`, and `ManagedBy`. |
+
+### Approved Instance Types
+
+Only the following instance types are accepted. Any other value will fail at `terraform plan` with a validation error.
+
+| Instance Type | vCPU | RAM | Recommended For |
+|---------------|------|-----|-----------------|
+| `t3.micro` | 2 | 1 GiB | Dev and staging only — low-traffic services and feature testing. |
+| `t3.small` | 2 | 2 GiB | All environments — use for prod or memory-sensitive workloads. |
+
+> Need a larger instance type? Raise a request via `#platform-engineering` on Slack.
 
 ---
 
 ## Outputs
 
-> This module does not currently define output variables.  
-> Consider adding outputs like `instance_ids` and `private_ips` for use in downstream modules.
+| Name | Type | Description |
+|------|------|-------------|
+| `public_ip` | `list(string)` | Public IP addresses of all provisioned instances, in the same order as `components`. Use index to target a specific instance, e.g. `module.app_servers.public_ip[0]`. Returns empty string if no public IP is assigned. |
+| `private_ip` | `list(string)` | Private IP addresses of all provisioned instances within the VPC. Prefer private IPs for internal service-to-service communication. |
 
-Suggested outputs to add in `outputs.tf`:
+**Referencing outputs in your stack:**
 
 ```hcl
-output "instance_ids" {
-  description = "List of EC2 instance IDs created by this module"
-  value       = aws_instance.main[*].id
+# Get the private IP of the first component (e.g. "api")
+output "api_private_ip" {
+  value = module.app_servers.private_ip[0]
 }
 
-output "private_ips" {
-  description = "List of private IP addresses of the created EC2 instances"
-  value       = aws_instance.main[*].private_ip
+# Pass all private IPs to another module (e.g. a load balancer)
+module "internal_lb" {
+  source     = "..."
+  target_ips = module.app_servers.private_ip
 }
 ```
 
@@ -96,62 +124,99 @@ output "private_ips" {
 
 ## Resource Naming Convention
 
-This module uses a local value to enforce a consistent naming pattern:
+All resources follow our platform naming standard:
 
 ```
 <component>-<environment>-<project>
 ```
 
-For example, with `component = "web"`, `environment = "prod"`, `project = "myapp"`:
-```
-web-prod-myapp
-```
+| Variable | Example Value | Result |
+|----------|--------------|--------|
+| `component = "api"` | `environment = "prod"` | `api-prod-payments` |
+| `component = "worker"` | `environment = "staging"` | `worker-staging-payments` |
+
+This naming is enforced via the `local.common_name` local and the `Name` tag on every instance. Do not override or bypass this.
 
 ---
 
-## Validation
+## Tagging Policy
 
-The `instance_type` variable is validated to only accept the following values:
+All instances provisioned by this module are tagged with a merged set of:
+- The `Name` tag (auto-generated from naming convention)
+- All key-value pairs from `common_tags`
 
-| Value | Use Case |
-|-------|----------|
-| `t3.micro` | Development / low-traffic workloads |
-| `t3.small` | Staging / moderate workloads |
+**Required tags** (enforced by our AWS Config rules):
 
-Any other value will cause Terraform to fail with the error:
+| Tag Key | Example Value | Purpose |
+|---------|--------------|---------|
+| `Owner` | `platform-engineering` | Team responsible for the resource |
+| `CostCenter` | `product-payments` | For cost allocation reports |
+| `ManagedBy` | `terraform` | Identifies IaC-managed resources |
+| `Name` | `api-prod-payments` | Auto-set by this module |
+
+---
+
+## How It Works
+
 ```
-Please select only either t3.micro or t3.small
+components = ["api", "worker"]
+        │
+        ▼
+count = length(components) → 2 instances
+        │
+        ├── aws_instance.main[0] → "api-prod-payments"
+        └── aws_instance.main[1] → "worker-prod-payments"
+                │
+                └── local-exec: logs private_ip to CI/CD output
 ```
+
+On `terraform apply`, a `local-exec` provisioner runs on each instance and prints its private IP to the pipeline output — useful for quick verification during deployments. Failures are non-blocking (`on_failure = continue`).
 
 ---
 
 ## File Structure
 
 ```
-.
-├── ec2.tf          # EC2 instance resource definition
-├── local.tf        # Local values (common_name)
-├── variables.tf    # Input variable definitions
-└── README.md       # Module documentation
+terraform-aws-ec2/
+├── ec2.tf          # Core EC2 resource definition with count-based provisioning
+├── variables.tf    # All input variable declarations with types and descriptions
+├── outputs.tf      # Exposes public_ip and private_ip as lists
+├── local.tf        # Builds the common_name local from environment + project
+└── README.md       # This file
 ```
 
 ---
 
-## Notes
+## Local Development & Testing
 
-- The `local-exec` provisioner logs each instance's private IP to your local terminal on `terraform apply`. Failures are non-blocking (`on_failure = continue`).
-- Ensure the IAM role/user running Terraform has `ec2:RunInstances` and related permissions.
-- The AMI ID must exist in the AWS region configured in your provider block.
+```bash
+# Clone the module
+git clone https://github.com/rahul-paladugu/Terraform-modules-aws-ec2.git
+cd Terraform-modules-aws-ec2
 
----
+# Initialise Terraform
+terraform init
 
-## Author
+# Validate the module syntax
+terraform validate
 
-**Rahul Paladugu**  
-GitHub: [rahul-paladugu](https://github.com/rahul-paladugu)
+# Plan with a sample tfvars
+terraform plan -var-file="examples/dev.tfvars"
+```
 
----
+Sample `examples/dev.tfvars`:
 
-## License
+```hcl
+components    = ["api"]
+ami_id        = "ami-0abcdef1234567890"
+instance_type = "t3.micro"
+sg_ids        = ["sg-0abc123"]
+environment   = "dev"
+project       = "myapp"
 
-This module is open-source and available under the [MIT License](LICENSE).
+common_tags = {
+  Owner      = "platform-engineering"
+  CostCenter = "product-myapp"
+  ManagedBy  = "terraform"
+}
+```
