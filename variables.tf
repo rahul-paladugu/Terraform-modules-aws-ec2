@@ -22,6 +22,11 @@ variable "instance_type" {
   }
 }
 
+variable "subnet_id" {
+  type = string
+  description = "please provide the subnet_id for the instance"
+}
+
 variable "common_tags" {
   type        = map(string)
   description = "A map of common tags to apply to all EC2 instances. Used for cost allocation, resource tracking, and organizational purposes. Example: { Owner = \"devops\", Team = \"platform\" }"
