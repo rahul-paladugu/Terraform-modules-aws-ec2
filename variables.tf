@@ -41,3 +41,8 @@ variable "project" {
   type        = string
   description = "The name of the project this module is being deployed for. Combined with the environment name to form a unique common name used across resource names and tags. Example: \"myapp\""
 }
+
+variable "iam_instance_profile" {
+  type    = string
+  default = null
+}
